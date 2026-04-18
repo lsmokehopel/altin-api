@@ -1,18 +1,24 @@
 const axios = require('axios');
 
-// TEFAS'tan fon fiyatı çeken fonksiyon
 async function fonFiyatCek(fonKodu) {
   try {
-    const url = `https://www.tefas.gov.tr/api/DB/BindHistoryInfo?fontip=YAT&bastarih=&bittarih=&fonkodu=${fonKodu}`;
+    const bugun = new Date();
+    const bitis = bugun.toLocaleDateString('tr-TR').split('.').reverse().join('-');
+    bugun.setDate(bugun.getDate() - 7);
+    const baslangic = bugun.toLocaleDateString('tr-TR').split('.').reverse().join('-');
+
+    const url = `https://www.tefas.gov.tr/api/DB/BindHistoryInfo?fontip=YAT&bastarih=${baslangic}&bittarih=${bitis}&fonkodu=${fonKodu}`;
     const response = await axios.get(url, {
       headers: {
         'Referer': 'https://www.tefas.gov.tr/',
-        'User-Agent': 'Mozilla/5.0'
+        'User-Agent': 'Mozilla/5.0',
+        'X-Requested-With': 'XMLHttpRequest'
       }
     });
     const data = response.data;
     if (data && data.data && data.data.length > 0) {
-      return parseFloat(data.data[0].FIYAT);
+      const fiyat = data.data[0].FIYAT;
+      return parseFloat(fiyat.toString().replace(',', '.')) || 0;
     }
     return 0;
   } catch (e) {
@@ -25,12 +31,10 @@ module.exports = async (req, res) => {
   res.setHeader('Access-Control-Allow-Methods', 'GET');
 
   try {
-    // Altın ve fon verilerini paralel çek
     const [altinResponse, tlyFiyat, pheFiyat] = await Promise.all([
-      axios.get('https://canlipiyasalar.haremaltin.com/tmp/altin.json', {
+      axios.get('https://altinapi.com/api/v1/prices', {
         headers: {
-          'Referer': 'https://www.haremaltin.com/',
-          'User-Agent': 'Mozilla/5.0'
+          'X-API-Key': 'hapi_0b320efeff5b41419bc3093ecb45f405'
         }
       }),
       fonFiyatCek('TLY'),
@@ -39,15 +43,23 @@ module.exports = async (req, res) => {
 
     const data = altinResponse.data.data;
 
+    const sembolBul = (sembol) => {
+      const bulunan = data.find(d => d.symbol === sembol);
+      return {
+        alis: bulunan?.bid || 0,
+        satis: bulunan?.ask || 0
+      };
+    };
+
     const sonuc = {
       altin: {
-        HAS:    { alis: parseFloat(data['ALTIN']?.alis)      || 0, satis: parseFloat(data['ALTIN']?.satis)      || 0 },
-        CEYREK: { alis: parseFloat(data['CEYREK_YENI']?.alis) || 0, satis: parseFloat(data['CEYREK_YENI']?.satis) || 0 },
-        YARIM:  { alis: parseFloat(data['YARIM_YENI']?.alis)  || 0, satis: parseFloat(data['YARIM_YENI']?.satis)  || 0 },
-        TAM:    { alis: parseFloat(data['TEK_YENI']?.alis)    || 0, satis: parseFloat(data['TEK_YENI']?.satis)    || 0 },
-        AYAR22: { alis: parseFloat(data['22_AYAR_BILEZIK']?.alis) || 0, satis: parseFloat(data['22_AYAR_BILEZIK']?.satis) || 0 },
-        AYAR14: { alis: parseFloat(data['14_AYAR']?.alis)     || 0, satis: parseFloat(data['14_AYAR']?.satis)     || 0 },
-        ONS:    { alis: parseFloat(data['ONS']?.alis)         || 0, satis: parseFloat(data['ONS']?.satis)         || 0 },
+        HAS:    sembolBul('ALTIN'),
+        CEYREK: sembolBul('CEYREK_YENI'),
+        YARIM:  sembolBul('YARIM_YENI'),
+        TAM:    sembolBul('TEK_YENI'),
+        AYAR22: sembolBul('22_AYAR_BILEZIK'),
+        AYAR14: sembolBul('14_AYAR'),
+        ONS:    sembolBul('XAUUSD'),
       },
       fonlar: {
         TLY: { fiyat: tlyFiyat },
