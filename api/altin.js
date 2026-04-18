@@ -1,73 +1,68 @@
 const axios = require('axios');
+const cheerio = require('cheerio');
 
 async function fonFiyatCek(fonKodu) {
   try {
-    const bugun = new Date();
-    const bitis = bugun.toLocaleDateString('tr-TR').split('.').reverse().join('-');
-    bugun.setDate(bugun.getDate() - 7);
-    const baslangic = bugun.toLocaleDateString('tr-TR').split('.').reverse().join('-');
-
-    const url = `https://www.tefas.gov.tr/api/DB/BindHistoryInfo?fontip=YAT&bastarih=${baslangic}&bittarih=${bitis}&fonkodu=${fonKodu}`;
+    const url = `https://www.tefas.gov.tr/FonAnaliz.aspx?FonKod=${fonKodu}`;
     const response = await axios.get(url, {
-      headers: {
-        'Referer': 'https://www.tefas.gov.tr/',
-        'User-Agent': 'Mozilla/5.0',
-        'X-Requested-With': 'XMLHttpRequest'
-      }
+      headers: { 'User-Agent': 'Mozilla/5.0' }
     });
-    const data = response.data;
-    if (data && data.data && data.data.length > 0) {
-      const fiyat = data.data[0].FIYAT;
-      return parseFloat(fiyat.toString().replace(',', '.')) || 0;
-    }
-    return 0;
+    const $ = cheerio.load(response.data);
+    const fiyatText = $('.top-info-area .top-info-second li').first().find('span').last().text().trim();
+    return parseFloat(fiyatText.replace(',', '.')) || 0;
   } catch (e) {
     return 0;
   }
 }
 
+async function altinFiyatCek() {
+  try {
+    const response = await axios.get('https://doviz.com/altin', {
+      headers: { 'User-Agent': 'Mozilla/5.0' }
+    });
+    const $ = cheerio.load(response.data);
+    const sonuc = {};
+
+    $('table tbody tr').each((i, el) => {
+      const isim = $(el).find('td').first().text().trim();
+      const alis = $(el).find('td').eq(1).text().trim().replace('.', '').replace(',', '.');
+      const satis = $(el).find('td').eq(2).text().trim().replace('.', '').replace(',', '.');
+
+      if (isim.includes('Has') || isim.includes('Gram')) sonuc['HAS'] = { alis: parseFloat(alis) || 0, satis: parseFloat(satis) || 0 };
+      else if (isim.includes('Çeyrek')) sonuc['CEYREK'] = { alis: parseFloat(alis) || 0, satis: parseFloat(satis) || 0 };
+      else if (isim.includes('Yarım')) sonuc['YARIM'] = { alis: parseFloat(alis) || 0, satis: parseFloat(satis) || 0 };
+      else if (isim.includes('Tam') || isim.includes('Ziynet')) sonuc['TAM'] = { alis: parseFloat(alis) || 0, satis: parseFloat(satis) || 0 };
+      else if (isim.includes('22')) sonuc['AYAR22'] = { alis: parseFloat(alis) || 0, satis: parseFloat(satis) || 0 };
+      else if (isim.includes('14')) sonuc['AYAR14'] = { alis: parseFloat(alis) || 0, satis: parseFloat(satis) || 0 };
+      else if (isim.includes('Ons') || isim.includes('ONS')) sonuc['ONS'] = { alis: parseFloat(alis) || 0, satis: parseFloat(satis) || 0 };
+    });
+
+    return sonuc;
+  } catch (e) {
+    return {};
+  }
+}
+
 module.exports = async (req, res) => {
   res.setHeader('Access-Control-Allow-Origin', '*');
-  res.setHeader('Access-Control-Allow-Methods', 'GET');
 
   try {
-    const [altinResponse, tlyFiyat, pheFiyat] = await Promise.all([
-      axios.get('https://altinapi.com/api/v1/prices', {
-        headers: {
-          'X-API-Key': 'hapi_0b320efeff5b41419bc3093ecb45f405'
-        }
-      }),
+    const [altin, tlyFiyat, pheFiyat] = await Promise.all([
+      altinFiyatCek(),
       fonFiyatCek('TLY'),
       fonFiyatCek('PHE')
     ]);
 
-    const data = altinResponse.data.data;
-
-    const sembolBul = (sembol) => {
-      const bulunan = data.find(d => d.symbol === sembol);
-      return {
-        alis: bulunan?.bid || 0,
-        satis: bulunan?.ask || 0
-      };
-    };
-
-    const sonuc = {
-      altin: {
-        HAS:    sembolBul('ALTIN'),
-        CEYREK: sembolBul('CEYREK_YENI'),
-        YARIM:  sembolBul('YARIM_YENI'),
-        TAM:    sembolBul('TEK_YENI'),
-        AYAR22: sembolBul('22_AYAR_BILEZIK'),
-        AYAR14: sembolBul('14_AYAR'),
-        ONS:    sembolBul('XAUUSD'),
-      },
-      fonlar: {
-        TLY: { fiyat: tlyFiyat },
-        PHE: { fiyat: pheFiyat }
+    res.status(200).json({
+      basarili: true,
+      veri: {
+        altin,
+        fonlar: {
+          TLY: { fiyat: tlyFiyat },
+          PHE: { fiyat: pheFiyat }
+        }
       }
-    };
-
-    res.status(200).json({ basarili: true, veri: sonuc });
+    });
 
   } catch (e) {
     res.status(500).json({ basarili: false, hata: e.message });
