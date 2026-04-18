@@ -1,5 +1,4 @@
 const axios = require('axios');
-const cheerio = require('cheerio');
 
 async function fonFiyatCek(fonKodu) {
   try {
@@ -27,43 +26,55 @@ async function fonFiyatCek(fonKodu) {
   }
 }
 
+function temizle(str) {
+  if (!str) return 0;
+  return parseFloat(str.toString().replace(/\./g, '').replace(',', '.')) || 0;
+}
+
 module.exports = async (req, res) => {
   res.setHeader('Access-Control-Allow-Origin', '*');
 
   try {
     const [altinRes, tlyFiyat, pheFiyat] = await Promise.all([
-      axios.get('https://altin.doviz.com', {
+      axios.get('https://bigpara.hurriyet.com.tr/api/v1/hisse/liste/altin', {
         headers: {
-          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-          'Accept': 'text/html,application/xhtml+xml',
-          'Accept-Language': 'tr-TR,tr;q=0.9',
+          'User-Agent': 'Mozilla/5.0',
+          'Referer': 'https://bigpara.hurriyet.com.tr/'
         }
       }),
       fonFiyatCek('TLY'),
       fonFiyatCek('PHE')
     ]);
 
-    const $ = cheerio.load(altinRes.data);
-    const sonuc = {};
+    const liste = altinRes.data?.data || [];
 
-    // Debug: tüm data-id ve fiyatları çek
-    $('[data-socket]').each((i, el) => {
-      const socket = $(el).attr('data-socket');
-      const alis = $(el).find('[data-socket-attr="buy"]').text().trim();
-      const satis = $(el).find('[data-socket-attr="sell"]').text().trim();
-      if (socket && alis) {
-        sonuc[socket] = { alis, satis };
-      }
-    });
+    const bul = (aramaKelimesi) => {
+      const item = liste.find(x =>
+        x.ad && x.ad.toLowerCase().includes(aramaKelimesi.toLowerCase())
+      );
+      return {
+        alis: temizle(item?.alis),
+        satis: temizle(item?.satis)
+      };
+    };
 
-    res.status(200).json({
-      basarili: true,
-      debug: sonuc,
+    const sonuc = {
+      altin: {
+        HAS:    bul('gram'),
+        CEYREK: bul('çeyrek'),
+        YARIM:  bul('yarım'),
+        TAM:    bul('tam altın'),
+        AYAR22: bul('22 ayar'),
+        AYAR14: bul('14 ayar'),
+        ONS:    bul('ons'),
+      },
       fonlar: {
         TLY: { fiyat: tlyFiyat },
         PHE: { fiyat: pheFiyat }
       }
-    });
+    };
+
+    res.status(200).json({ basarili: true, veri: sonuc });
 
   } catch (e) {
     res.status(500).json({ basarili: false, hata: e.message });
